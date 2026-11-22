@@ -48,6 +48,67 @@
     } catch (e) { }
   }
 
+  function upsAdd(name, ref) {
+    try {
+      if (!ref) return;
+      var a = LS.get('fq_ups', []) || [];
+      a = a.filter(function (x) { return x && x.name !== name; });
+      a.unshift({ name: name, ref: ref, up: 'wait' });
+      LS.set('fq_ups', a.slice(0, 50));
+    } catch (e) { }
+  }
+
+  function upsSet(name, st) {
+    try {
+      var a = LS.get('fq_ups', []) || [];
+      a.forEach(function (x) { if (x && x.name === name) x.up = st; });
+      LS.set('fq_ups', a);
+    } catch (e) { }
+  }
+
+  function upsPending() {
+    try {
+      return (LS.get('fq_ups', []) || []).filter(function (x) { return x && x.up !== 'ok'; });
+    } catch (e) { return []; }
+  }
+
+  function upsOne(name, ref) {
+    if (!(A && A.uploadFile)) { toast('这个版本不支持手动上传'); return; }
+    state.jobs.forEach(function (j) { if (j.name === name) { j.up = 'run'; j.step = '正在上传到书库…'; } });
+    upsSet(name, 'run');
+    renderDownloads();
+    var r = A.uploadFile(name + (/\.txt$/.test(name) ? '' : '.txt'), ref || '');
+    if (r && String(r).indexOf('ERR') === 0) {
+      toast(String(r).slice(4));
+      state.jobs.forEach(function (j) { if (j.name === name) j.up = 'fail'; });
+      upsSet(name, 'fail');
+      renderDownloads();
+    }
+  }
+
+  function upsAll() {
+    var list = upsPending().filter(function (x) { return x.up !== 'run'; });
+    if (!list.length) { toast('没有待上传的书'); return; }
+    list.forEach(function (x) { upsOne(x.name, x.ref); });
+    toast('开始上传 ' + list.length + ' 本');
+  }
+
+  window.fqUpDone = function (name, res) {
+    name = String(name || '').replace(/\.txt$/, '');
+    var ok = String(res || '').indexOf('OK:') === 0;
+    state.jobs.forEach(function (j) {
+      if (j.name !== name) return;
+      j.up = ok ? 'ok' : 'fail';
+      j.step = ok ? ('\u2713 已入库' + String(res).slice(2).replace('|', ' · ') + ' 章')
+                  : ('没入库：' + String(res || '').replace(/^[A-Z]+:/, ''));
+    });
+    upsSet(name, ok ? 'ok' : 'fail');
+    var changed = false;
+    state.dls.forEach(function (d) { if (d.name === name) { d.up = ok ? 'ok' : 'fail'; changed = true; } });
+    if (changed) LS.set('fq_dls', state.dls);
+    renderDownloads();
+  };
+
   function restoreJobs() {
     var saved = LS.get('fq_jobs', []);
     if (!saved || !saved.length) return;
@@ -728,7 +789,9 @@
     var r;
     if (streaming) {
       var out = A.saveEnd();
-      if (!out || String(out).indexOf('ERR') === 0) throw new Error('写入失败');
+      if (!out || String(out).indexOf('ERR') === 0) {
+        throw new Error('写入失败：' + (String(out || 'saveEnd 返回空').replace(/^ERR:/, '')));
+      }
       r = { path: out, size: totalBytes };
     } else {
       r = await saveText(fname, parts.join(''));
@@ -736,8 +799,9 @@
     job.status = 'ok';
     job.written = 0;
     job.resumeFrom = 0;
-    job.saveRef = '';
     job.resumable = false;
+    if (!job.up) job.up = 'wait';
+    if (job.saveRef && job.up !== 'ok') upsAdd(job.name, job.saveRef);
     saveJobs();
     job.step = '完成 · ' + chs.length + ' 章 · ' + fmtSize(r.size || 0) + ' · 用时 ' + fmtDur(job.elapsed || 0);
     job.pct = 100;
@@ -755,6 +819,12 @@
     var box = $('#dlList');
     var html = '';
     if (state.jobs.length) {
+      var pend = upsPending().filter(function (x) { return x.up !== 'run'; }).length;
+      if (pend > 0) {
+        html += '<div style="display:flex;align-items:center;gap:8px;padding:4px 2px 8px">'
+              + '<span style="font-size:12px;color:var(--muted);flex:1">有 ' + pend + ' 本还没上传到书库</span>'
+              + '<button class="btn mini" id="upAllBtn">一键上传</button></div>';
+      }
       html += '<div class="lab" style="font-size:12px;color:var(--muted);padding:2px 2px 4px">进行中 / 排队</div>';
       html += state.jobs.map(function (j) {
         var bar = j.status === 'ok' ? ' ok' : '';
@@ -775,7 +845,13 @@
           '<div class="jbox">' + esc(j.step || j.phase || '准备中…') + '</div>' +
           (j.status === 'err' ? '<div class="cmeta" style="color:#FF8B9B;margin-top:6px">' + esc(j.err) + '</div>' : '') +
           '<div class="cfoot">' +
-          (j.status === 'ok' ? '<span class="cid" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(j.path) + '</span>' : '<div class="spacer"></div>') +
+          (j.status === 'ok' ? '<span class="cid" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(j.path || '') + '</span>' : '<div class="spacer"></div>') +
+          (j.status === 'ok'
+            ? (j.up === 'ok'
+                ? '<span class="pill ok" style="margin-right:4px">\u2713 已入库</span>'
+                : '<button class="btn mini" data-up="' + esc(j.id) + '"' + (j.up === 'run' ? ' disabled' : '') + '>'
+                  + (j.up === 'run' ? '上传中…' : '上传到书库') + '</button>')
+            : '') +
           (j.status === 'run'
             ? '<button class="btn ghost mini" data-pause="' + esc(j.id) + '">暂停</button>'
               + '<button class="btn ghost mini" data-cancel="' + esc(j.id) + '">取消</button>'
@@ -799,7 +875,12 @@
           '<div class="cmeta"><span class="pill ok">' + d.chapters + ' 章</span><span>' + fmtSize(d.size) + '</span>' +
           '<span>' + new Date(d.time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) + '</span></div>' +
           '<div class="cmeta" style="margin-top:5px"><span class="cid" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(d.path) + '</span></div>' +
-          '<div class="cfoot"><div class="spacer"></div><button class="btn ghost mini" data-copy="' + esc(d.id) + '">复制 ID</button></div>' +
+          '<div class="cfoot"><div class="spacer"></div>' +
+          (d.up === 'ok'
+            ? '<span class="pill ok" style="margin-right:4px">\u2713 已入库</span>'
+            : '<button class="btn mini" data-upname="' + esc(d.name) + '"' + (d.up === 'run' ? ' disabled' : '') + '>'
+              + (d.up === 'run' ? '上传中…' : '上传到书库') + '</button>') +
+          '<button class="btn ghost mini" data-copy="' + esc(d.id) + '">复制 ID</button></div>' +
           '</div></div>';
       }).join('');
     }
@@ -892,6 +973,26 @@
       syncProgress();
       return;
     }
+    var up = e.target.closest('[data-up]');
+    if (up) {
+      var uid = up.dataset.up, uj = null;
+      state.jobs.forEach(function (j) { if (j.id === uid) uj = j; });
+      if (uj) upsOne(uj.name, uj.saveRef);
+      return;
+    }
+    var upAll = e.target.closest('#upAllBtn');
+    if (upAll) { upsAll(); return; }
+    var upn = e.target.closest('[data-upname]');
+    if (upn) {
+      var un = upn.dataset.upname;
+      if (!(A && A.uploadByName)) { toast('这个版本不支持'); return; }
+      var rr = A.uploadByName(un);
+      if (rr && String(rr).indexOf('ERR') === 0) { toast(String(rr).slice(4)); return; }
+      state.dls.forEach(function (d) { if (d.name === un) d.up = 'run'; });
+      renderDownloads();
+      toast('开始上传《' + un + '》');
+      return;
+    }
     var cp = e.target.closest('[data-copy]');
     if (cp) { if (A && A.copy) { A.copy(cp.dataset.copy); toast('已复制'); } }
   });
@@ -951,9 +1052,11 @@
     return 'ok';
   };
   window.fqUp = function (name, pct) {
+    name = String(name || '').replace(/\.txt$/, '');
     for (var i = 0; i < state.jobs.length; i++) {
       var j = state.jobs[i];
       if (j.name !== name) continue;
+      j.up = 'run';
       j.step = (pct >= 100) ? '\\u2713 已上传到书库' : ('正在上传到书库… ' + pct + '%');
       renderDownloads();
       return 'ok';

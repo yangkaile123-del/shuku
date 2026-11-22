@@ -2074,6 +2074,12 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/fts":
                 if not self.key_ok(qs):
                     return self.json({"ok": False, "err": "bad key"}, 403)
+                q = (qs.get("q", [""])[0] or "").strip()
+                if q:
+                    bid = qs_int(qs.get("bid", ["0"])[0], 0, 0) or None
+                    limit = qs_int(qs.get("limit", ["60"])[0], 60, 1, 500)
+                    rows, total = search_text(q, bid, limit)
+                    return self.json({"ok": True, "q": q, "total": total, "data": rows})
                 return self.json({"ok": True, "indexed": fts_sync(full=qs.get("full", ["0"])[0] == "1")})
             if p == "/api/marks":
                 bid = qs_int(qs.get("book", ["0"])[0], 0, 0)
@@ -2168,14 +2174,44 @@ class H(BaseHTTPRequestHandler):
             traceback.print_exc()
             return self.send_body(500, "error: %s" % e, "text/plain; charset=utf-8")
 
+    def read_body(self):
+        """支持 Content-Length 与 chunked 两种请求体（部分客户端用流式上传，不带长度）。"""
+        n = qs_int(self.headers.get("Content-Length"), 0, 0)
+        if n:
+            return self.rfile.read(n)
+        te = (self.headers.get("Transfer-Encoding") or "").lower()
+        if "chunked" in te:
+            parts = []
+            while True:
+                line = self.rfile.readline(128)
+                if not line:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    size = int(line.split(b";")[0], 16)
+                except Exception:
+                    break
+                if size == 0:
+                    while True:
+                        t = self.rfile.readline(128)
+                        if not t or t in (b"\r\n", b"\n"):
+                            break
+                    break
+                chunk = self.rfile.read(size)
+                parts.append(chunk)
+                self.rfile.read(2)
+            return b"".join(parts)
+        return b""
+
     # ---- POST
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
         p = u.path
         qs = urllib.parse.parse_qs(u.query)
         c = self.cfg()
-        n = qs_int(self.headers.get("Content-Length"), 0, 0)
-        raw = self.rfile.read(n) if n else b""
+        raw = self.read_body()
         try:
             if p == "/api/book":
                 if not self.key_ok(qs):

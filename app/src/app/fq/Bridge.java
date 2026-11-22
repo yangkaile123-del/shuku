@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
@@ -76,6 +77,8 @@ public class Bridge {
     }
 
     private OutputStream out;
+    private String writeErr = "";
+    private long written = 0;
     private String outName;
     private Uri lastUri;
     private File lastFile;
@@ -231,26 +234,47 @@ public class Bridge {
     @JavascriptInterface
     public void saveAppend(String b64) {
         try {
-            if (out == null || b64 == null || b64.isEmpty()) return;
-            out.write(Base64.decode(b64, Base64.DEFAULT));
-        } catch (Throwable ignore) { }
+            if (b64 == null || b64.isEmpty()) return;
+            if (out == null) { writeErr = "输出流已关闭"; return; }
+            byte[] bb = Base64.decode(b64, Base64.DEFAULT);
+            out.write(bb);
+            written += bb.length;
+        } catch (Throwable t) {
+            writeErr = String.valueOf(t.getMessage());
+        }
     }
 
     @JavascriptInterface
     public String saveEnd() {
-        try {
-            if (out != null) { out.flush(); out.close(); out = null; }
-            if (outUri != null && Build.VERSION.SDK_INT >= 29) {
+        String err = writeErr;
+        if (out != null) {
+            try { out.flush(); } catch (Throwable t) { if (err.isEmpty()) err = "flush 失败：" + t.getMessage(); }
+            try { out.close(); } catch (Throwable t) { if (err.isEmpty()) err = "close 失败：" + t.getMessage(); }
+            out = null;
+        }
+        // 只有 MediaStore 的文件才有 IS_PENDING；自定义目录（SAF）的 uri 更新会抛异常
+        if (outUri != null && Build.VERSION.SDK_INT >= 29
+                && "media".equals(outUri.getAuthority())) {
+            try {
                 ContentValues cv = new ContentValues();
                 cv.put(MediaStore.MediaColumns.IS_PENDING, 0);
                 act.getContentResolver().update(outUri, cv, null, null);
+            } catch (Throwable t) {
+                if (err.isEmpty()) err = "收尾失败：" + t.getMessage();
             }
-            final String nm = outName;
-            try { autoUpload(nm); } catch (Throwable ignore) { }
-            return "Download/" + outName;
-        } catch (Throwable t) {
-            return "ERR:" + t.getMessage();
         }
+        if (!err.isEmpty()) {
+            String e2 = err;
+            writeErr = "";
+            return "ERR:" + e2 + "（已写入 " + written + " 字节）";
+        }
+        if (written <= 0) {
+            writeErr = "";
+            return "ERR:一个字节都没写进去";
+        }
+        final String nm = outName;
+        try { autoUpload(nm); } catch (Throwable ignore) { }
+        return "Download/" + nm;
     }
 
     @JavascriptInterface
@@ -272,6 +296,7 @@ public class Bridge {
                 outName = f.getName();
             }
             if (out == null) return "ERR:续写打开失败";
+            written = 1;
             return "OK";
         } catch (Throwable t) {
             return "ERR:" + t.getMessage();
@@ -297,6 +322,8 @@ public class Bridge {
     private void closeOut() {
         try { if (out != null) { out.flush(); out.close(); } } catch (Throwable ignore) { }
         out = null;
+        writeErr = "";
+        written = 0;
         outUri = null;
     }
 
@@ -516,7 +543,19 @@ public class Bridge {
             c = (HttpURLConnection) new URL(u).openConnection();
             c.setRequestMethod("POST");
             c.setDoOutput(true);
-            c.setChunkedStreamingMode(65536);
+            // 长度未知时先读进内存，否则一律用定长发送：
+            // 有些服务端（含本项目旧版 Python 端点）不解码 chunked 请求体
+            if (total <= 0) {
+                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                byte[] tmp = new byte[65536];
+                int r0;
+                while ((r0 = in.read(tmp)) > 0) bo.write(tmp, 0, r0);
+                in.close();
+                in = new java.io.ByteArrayInputStream(bo.toByteArray());
+                total = bo.size();
+            }
+            if (total <= 0) return "ERR:文件是空的（0 字节）";
+            c.setFixedLengthStreamingMode(total);
             c.setConnectTimeout(20000);
             c.setReadTimeout(900000);
             c.setRequestProperty("Content-Type", "text/plain; charset=utf-8");
@@ -558,6 +597,73 @@ public class Bridge {
             try { if (in != null) in.close(); } catch (Throwable ignore) { }
             try { if (c != null) c.disconnect(); } catch (Throwable ignore) { }
         }
+    }
+
+    @JavascriptInterface
+    public String uploadFile(final String name, final String ref) {
+        if (name == null || name.trim().isEmpty()) return "ERR:没有文件名";
+        final Uri uri = (ref != null && ref.startsWith("content:")) ? Uri.parse(ref) : null;
+        final File file = (uri == null && ref != null && !ref.isEmpty()) ? new File(ref) : null;
+        if (uri == null && (file == null || !file.exists())) return "ERR:找不到下载好的文件";
+        final WebView wv = web;
+        pool.execute(new Runnable() {
+            public void run() {
+                String r = uploadOnce(act, name, uri, file, wv);
+                handleResult(act, name, uri, file, r);
+                notifyDone(wv, name, r);
+            }
+        });
+        return "OK";
+    }
+
+    private Uri findMedia(String nm) {
+        try {
+            Uri col = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+            Cursor c = act.getContentResolver().query(col,
+                    new String[]{MediaStore.MediaColumns._ID},
+                    MediaStore.MediaColumns.DISPLAY_NAME + "=?",
+                    new String[]{nm},
+                    MediaStore.MediaColumns.DATE_MODIFIED + " DESC");
+            if (c != null) {
+                try {
+                    if (c.moveToFirst()) return ContentUris.withAppendedId(col, c.getLong(0));
+                } finally {
+                    c.close();
+                }
+            }
+        } catch (Throwable ignore) { }
+        return null;
+    }
+
+    /** 按文件名从系统「下载」库里找出已存在的 txt 并上传（老文件补传用） */
+    @JavascriptInterface
+    public String uploadByName(final String name) {
+        if (name == null || name.trim().isEmpty()) return "ERR:没有文件名";
+        final String nm = name.endsWith(".txt") ? name : name + ".txt";
+        final Uri uri = findMedia(nm);
+        if (uri == null) return "ERR:系统下载库里找不到 " + nm + "，可能已被移动或改名";
+        final WebView wv = web;
+        pool.execute(new Runnable() {
+            public void run() {
+                String r = uploadOnce(act, nm, uri, null, wv);
+                handleResult(act, nm, uri, null, r);
+                notifyDone(wv, nm, r);
+            }
+        });
+        return "OK";
+    }
+
+    static void notifyDone(WebView web, final String name, final String res) {
+        if (web == null) return;
+        try {
+            final String js = "window.fqUpDone&&window.fqUpDone(" + JSONObject.quote(name)
+                    + "," + JSONObject.quote(res) + ")";
+            web.post(new Runnable() {
+                public void run() {
+                    try { web.evaluateJavascript(js, null); } catch (Throwable ignore) { }
+                }
+            });
+        } catch (Throwable ignore) { }
     }
 
     static void notifyWeb(final WebView web, final String name, final int pct) {

@@ -123,12 +123,12 @@ curl -X POST --data-binary @小说.txt \
 | GET | `/api/books?q=&f=&sort=&per=&p=` | 书架列表（搜索/筛选/排序/分页） |
 | GET | `/api/stats` | 汇总统计 |
 | GET | `/api/toc?book=ID` | 目录（章节序号 / 标题 / 字数） |
-| GET | `/api/fts?key=&q=&bid=` | 全文检索 |
+| GET | `/api/fts?key=&q=&bid=&limit=` | 全文检索（不带 `q` 则重建索引，返回 `indexed`） |
 | GET | `/api/appver` | 客户端版本与 APK 大小 |
 | GET | `/api/cover?id=&key=` | 从豆瓣搜封面 |
 | GET | `/api/cover/url?id=&key=&url=` | 用指定链接做封面 |
 | GET | `/api/marks?book=&idx=` | 某章的书签/划线/笔记 |
-| POST | `/api/import?key=&filename=&cat=` | 导入一本（raw body 即正文） |
+| POST | `/api/import?key=&filename=&cat=` | 导入一本（raw body 即正文，支持 `Content-Length` 与 `chunked`） |
 | POST | `/api/mark?book=&idx=&para=&kind=&color=` | 新增标记 |
 | POST | `/api/mark/del?id=` / `/api/mark/note?id=` | 删标记 / 改笔记 |
 | POST | `/api/pos?book=&idx=&para=` | 保存阅读位置 |
@@ -154,7 +154,7 @@ keytool -genkey -v -keystore keystore.jks -alias shelf \
         -keyalg RSA -keysize 2048 -validity 10000
 
 KEYSTORE_PASS=你的口令 VERSION=1.0 bash build.sh
-# 产物：build/书库-1.0.apk
+# 产物：build/书库-2.9.apk
 ```
 
 > `Conf.java`、`*.jks`、`*.apk` 都已在 `.gitignore` 里，不会被提交。
@@ -163,6 +163,51 @@ KEYSTORE_PASS=你的口令 VERSION=1.0 bash build.sh
 
 - 长按标题栏或进 ⚙ 可以改服务器地址 / 密码 / 下载目录 / 下载完是否自动入库
 - 番茄 tab 是内置的网页下载器，抓目录后分批下载并把 txt 落盘，下完自动上传
+
+---
+
+## 更新日志
+
+### 2.9
+- **修**：客户端流式上传发 `Transfer-Encoding: chunked`，服务端只读 `Content-Length`，
+  导致收到空正文、一律报「没有正文内容」。两边同时修好：客户端改定长发送，
+  服务端新增 `read_body()` 兼容 chunked。
+- **修**：存储到自定义目录（SAF）时 `saveEnd()` 无条件更新 MediaStore 的 `IS_PENDING`，
+  抛异常被当成「写入失败」，并连带跳过自动上传。
+- **修**：`/api/fts?q=` 之前只重建索引不返回结果，现已按文档返回检索数据。
+- **加**：一键上传、按文件名反查补传、失败卡片重试、待上传队列（下次启动自动补传）。
+
+### 2.5
+- 书架顶部「最近入库」横条，数据取自服务器 `?sort=added`，可直接核对上传是否成功。
+
+### 2.4
+- 下载完成自动入库开关、待上传队列、上传进度回显。
+
+### 2.3
+- 可选下载目录（`ACTION_OPEN_DOCUMENT_TREE`），默认仍是系统「下载」文件夹。
+
+### 2.2
+- 前台服务保活 + 通知栏进度；书架改用服务器真封面；范围下载（最近 50 章 / 指定章节）。
+
+### 2.1
+- 失败卡片「重试」；下载任务持久化（`fq_jobs`），重开 App 可断点续下。
+
+### 2.0 / 1.9
+- 进度条下方「正在干什么」小框；速度、已用时间、剩余时间；通知栏进度。
+
+### 1.8
+- 暂停 / 继续 / 取消。
+
+### 1.7
+- 下载提速：批大小 20→30、流式落盘（不再收尾一次性编码）、并发 1~3、失败自动重试 6 次。
+
+### 1.6
+- 书架搜索与状态筛选、阅读页原生底栏（上一章 / 目录 / 下一章 / 字号背景）、
+  番茄页返回键就地返回、下载完成自动入库、启动秒开缓存、书架长按菜单、离线缓存、检查更新。
+
+### 1.0–1.5
+- 两个 App 合并为单壳三 tab；主题单一真源（原生唯一管理，网页不再回写）；
+  edge-to-edge 状态栏适配。
 
 ---
 
