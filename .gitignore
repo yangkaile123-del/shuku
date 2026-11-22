@@ -1,0 +1,27 @@
+# ---------- 构建产物 ----------
+app/build/
+*.apk
+*.aab
+*.dex
+*.class
+
+# ---------- 签名与密钥（绝不入库） ----------
+*.jks
+*.keystore
+app/src/com/fj/bookshelf/Conf.java
+
+# ---------- 服务端运行时数据 ----------
+server/data/
+server/inbox/
+server/__pycache__/
+__pycache__/
+*.pyc
+
+# ---------- 杂物 ----------
+*.bak
+*.bak[0-9]*
+*.log
+run.log
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,7 @@
+package com.fj.bookshelf;
+
+/** 复制成 Conf.java 并填入你自己的服务器地址与管理密码 */
+public final class Conf {
+    public static final String BASE = "http://你的域名或IP:端口";
+    public static final String KEY = "你的管理密码";
+}

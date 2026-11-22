@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#08090D">
+<meta name="color-scheme" content="dark light">
+<title>番茄下载器</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-dark">
+<div id="app">
+
+  <header class="appbar">
+    <div class="brand">
+      <div class="logo"><span>番</span></div>
+      <div class="btxt">
+        <h1>番茄下载器</h1>
+        <p id="statusLine">正在初始化…</p>
+      </div>
+    </div>
+    <button id="themeBtn" class="iconbtn" aria-label="切换主题">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+        <path d="M21 12.8A8.5 8.5 0 1111.2 3a6.5 6.5 0 009.8 9.8z"/>
+      </svg>
+    </button>
+  </header>
+
+  <main id="main">
+
+    <section class="view active" id="view-search">
+      <div class="searchwrap">
+        <div class="searchbox">
+          <svg class="sic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/>
+          </svg>
+          <input id="q" type="search" placeholder="搜索书名 / 作者" autocomplete="off" enterkeyhint="search" spellcheck="false">
+          <button id="clearQ" class="clearbtn" hidden aria-label="清空">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="hot" class="hot"></div>
+      <div id="searchResults" class="list"></div>
+    </section>
+
+    <section class="view" id="view-rank">
+      <div class="segwrap">
+        <div class="seg" id="rankSub">
+          <button class="subtab active" data-g="1">男频</button>
+          <button class="subtab" data-g="0">女频</button>
+        </div>
+      </div>
+      <div id="rankList" class="list"></div>
+    </section>
+
+    <section class="view" id="view-dl">
+      <div class="dlhead">
+        <h2>下载管理</h2>
+        <button id="concBtn" class="btn ghost mini">并发 1</button>
+        <button id="openDir" class="btn ghost mini">打开目录</button>
+      </div>
+      <div id="dlList" class="list"></div>
+    </section>
+
+  </main>
+
+  <nav class="tabbar" id="tabs">
+    <div class="tab-pill" id="tabPill"></div>
+    <button class="tab active" data-view="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+      <span>搜索</span>
+    </button>
+    <button class="tab" data-view="rank">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4"/><path d="M7 4h10v5a5 5 0 01-10 0z"/><path d="M17 5h2.5a2.5 2.5 0 01-2.5 4M7 5H4.5A2.5 2.5 0 007 9"/></svg>
+      <span>榜单</span>
+    </button>
+    <button class="tab" data-view="dl">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 18.5h16"/></svg>
+      <span>下载</span>
+    </button>
+  </nav>
+
+  <div class="sheet-mask" id="mask"></div>
+  <section class="sheet" id="sheet">
+    <div class="grab"><i></i></div>
+    <div id="sheetBody"></div>
+  </section>
+
+  <div id="toast" class="toast"></div>
+</div>
+<script src="pako.js"></script>
+<script src="proto.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
