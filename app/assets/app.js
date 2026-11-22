@@ -815,7 +815,20 @@
     toast('《' + job.name + '》下载完成');
   }
 
-  function renderDownloads() {
+  var dlSig = '', dlBuilt = false, dlRefs = {};
+
+  function setText(el, v) {
+    if (el && el.textContent !== v) el.textContent = v;
+  }
+
+  function dlSignature() {
+    var pend = state.jobs.length ? upsPending().filter(function (x) { return x.up !== 'run'; }).length : 0;
+    return state.jobs.map(function (j) { return j.id + ':' + j.status + ':' + (j.up || ''); }).join(',')
+      + '|' + state.dls.map(function (d) { return d.id + ':' + (d.up || ''); }).join(',')
+      + '|' + pend;
+  }
+
+  function buildDlList() {
     var box = $('#dlList');
     var html = '';
     if (state.jobs.length) {
@@ -828,20 +841,16 @@
       html += '<div class="lab" style="font-size:12px;color:var(--muted);padding:2px 2px 4px">进行中 / 排队</div>';
       html += state.jobs.map(function (j) {
         var bar = j.status === 'ok' ? ' ok' : '';
-        return '<div class="card" style="flex-direction:column;align-items:stretch;gap:0">' +
+        return '<div class="card" data-jid="' + esc(j.id) + '" style="flex-direction:column;align-items:stretch;gap:0">' +
           '<div class="cbody">' +
           '<div style="display:flex;align-items:center;gap:8px">' +
           '<h3 class="ctitle" style="margin:0;flex:1">' + esc(j.name) + '</h3>' +
-          '<span class="pill ' + (j.status === 'ok' ? 'ok' : j.status === 'err' ? 'hot' : '') + '">' +
+          '<span class="pill stpill ' + (j.status === 'ok' ? 'ok' : j.status === 'err' ? 'hot' : '') + '">' +
           (j.status === 'wait' ? '排队' : j.status === 'run' ? (j.phase || '下载中') : j.status === 'pause' ? '已暂停' : j.status === 'ok' ? '完成' : '失败') + '</span></div>' +
           '<div class="prog"><div class="bar' + bar + '"><i style="width:' + (j.pct || 0) + '%"></i></div>' +
-          '<div class="ptxt"><span>' + (j.total ? j.done + ' / ' + j.total + ' 章' : '准备中…') +
-          (j.status === 'run' && j.speed > 0 ? ' · ' + j.speed.toFixed(1) + ' 章/秒' : '') + '</span>' +
+          '<div class="ptxt pt1"><span>' + (j.total ? j.done + ' / ' + j.total + ' 章' : '准备中…') + '</span>' +
           '<span>' + (j.status === 'ok' ? fmtSize(j.size) : (j.pct || 0) + '%') + '</span></div>' +
-          (j.status === 'run' && j.speed > 0
-            ? '<div class="ptxt" style="margin-top:2px"><span>已用 ' + fmtDur(j.elapsed) + '</span>'
-              + '<span>剩约 ' + fmtDur((j.total - j.done) / j.speed) + '</span></div>'
-            : '') + '</div>' +
+          '<div class="ptxt pt2"' + (j.status === 'run' && j.speed > 0 ? '' : ' style="display:none"') + '><span></span><span></span></div></div>' +
           '<div class="jbox">' + esc(j.step || j.phase || '准备中…') + '</div>' +
           (j.status === 'err' ? '<div class="cmeta" style="color:#FF8B9B;margin-top:6px">' + esc(j.err) + '</div>' : '') +
           '<div class="cfoot">' +
@@ -886,9 +895,61 @@
     }
     if (!html) html = emptyBox('还没有下载任务', '去搜索或榜单里挑一本，点「下载 TXT」');
     box.innerHTML = html;
+    dlRefs = {};
+    state.jobs.forEach(function (j) {
+      var el = box.querySelector('[data-jid="' + j.id + '"]');
+      if (!el) return;
+      dlRefs[j.id] = {
+        bar: el.querySelector('.bar > i'),
+        p1a: el.querySelector('.pt1 span:nth-of-type(1)'),
+        p1b: el.querySelector('.pt1 span:nth-of-type(2)'),
+        p2: el.querySelector('.pt2'),
+        p2a: el.querySelector('.pt2 span:nth-of-type(1)'),
+        p2b: el.querySelector('.pt2 span:nth-of-type(2)'),
+        jbox: el.querySelector('.jbox')
+      };
+    });
+    dlBuilt = true;
+  }
+
+  function patchDlList() {
+    for (var i = 0; i < state.jobs.length; i++) {
+      var j = state.jobs[i], r = dlRefs[j.id];
+      if (!r) continue;
+      var pct = Math.max(0, Math.min(100, j.pct || 0));
+      var w = pct + '%';
+      if (r.bar && r.bar.style.width !== w) r.bar.style.width = w;
+      var l1 = j.total ? (j.done + ' / ' + j.total + ' 章') : '准备中…';
+      if (j.status === 'run' && j.speed > 0) l1 += ' · ' + j.speed.toFixed(1) + ' 章/秒';
+      setText(r.p1a, l1);
+      setText(r.p1b, j.status === 'ok' ? fmtSize(j.size) : pct + '%');
+      var running = (j.status === 'run' && j.speed > 0);
+      if (r.p2) {
+        var disp = running ? '' : 'none';
+        if (r.p2.style.display !== disp) r.p2.style.display = disp;
+      }
+      if (running) {
+        setText(r.p2a, '已用 ' + fmtDur(j.elapsed));
+        setText(r.p2b, '剩约 ' + fmtDur((j.total - j.done) / j.speed));
+      }
+      setText(r.jbox, j.step || j.phase || '准备中…');
+    }
+  }
+
+  function renderDownloads() {
+    var box = $('#dlList');
+    if (!box) return;
+    var sig = dlSignature();
+    if (!dlBuilt || sig !== dlSig) {
+      dlSig = sig;
+      buildDlList();
+    } else {
+      patchDlList();
+    }
   }
 
   setInterval(function () {
+    if (document.hidden) return;
     for (var i = 0; i < state.jobs.length; i++) {
       if (state.jobs[i].status === 'run') { renderDownloads(); return; }
     }
